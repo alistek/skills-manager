@@ -92,6 +92,7 @@ internal static class UpdateEngine
         var skills = SkillLock.Read().Skills;
         var checkable = new List<(string Name, JsonNode Entry)>();
         var wkGroups = new List<(string Key, List<WellKnownItem> Items)>();
+        var notionGroups = new List<(string Key, List<(string Name, JsonNode Entry, string PageId)> Items)>();
         foreach (var (name, entry) in skills)
         {
             if (!UpdateChecks.MatchesSkillFilter(name, filter) || entry == null) continue;
@@ -99,6 +100,11 @@ internal static class UpdateEngine
             if (S(entry, "sourceType") == "well-known" && NonEmpty(entry, "sourceBaseUrl") is { } b && NonEmpty(entry, "wellKnownDigest") is { } digest)
             {
                 AddToGroup(wkGroups, b, new WellKnownItem(name, digest, null));
+                continue;
+            }
+            if (S(entry, "sourceType") == "notion" && NonEmpty(entry, "notionPageId") is { } pageId)
+            {
+                AddToGroup(notionGroups, S(entry, "source") ?? "", (name, entry, pageId));
                 continue;
             }
             if (NonEmpty(entry, "skillFolderHash") == null || NonEmpty(entry, "skillPath") == null)
@@ -110,6 +116,7 @@ internal static class UpdateEngine
         }
 
         CheckWellKnownGroups(wkGroups, SkillScope.Global, c, log);
+        CheckNotionGroups(notionGroups, c, log);
 
         var bySource = new List<(string Key, List<(string Name, JsonNode Entry)> Items)>();
         foreach (var item in checkable) AddToGroup(bySource, $"{S(item.Entry, "source")}\n{S(item.Entry, "ref")}", item);
@@ -210,6 +217,56 @@ internal static class UpdateEngine
             finally
             {
                 Git.TryCleanup(temp);
+            }
+        }
+    }
+
+    /// Notion skills: each page's version id against the one recorded at install.
+    /// Without the Notion CLI, or signed out, nothing more can be checked.
+    private static void CheckNotionGroups(List<(string Key, List<(string Name, JsonNode Entry, string PageId)> Items)> groups, Collector c, Action<string> log)
+    {
+        NotionCliException? blocked = null;
+        foreach (var (source, items) in groups)
+        {
+            if (blocked == null) log($"Checking skills from source: {source}");
+            foreach (var (name, entry, pageId) in items)
+            {
+                Sys.ThrowIfCancelled();
+                if (blocked != null)
+                {
+                    c.Skip(name, blocked.Message, source);
+                    continue;
+                }
+                try
+                {
+                    var (latest, _) = NotionFeed.GetSkillDirectory(pageId);
+                    var current = NonEmpty(entry, "notionVersionId");
+                    if (latest == current) continue;
+                    c.Updates.Add(new SkillUpdate
+                    {
+                        Name = name,
+                        Scope = SkillScope.Global,
+                        Source = source,
+                        CurrentHash = current,
+                        LatestHash = latest,
+                        InstallSource = NotionFeed.CanonicalUrl(pageId),
+                    });
+                }
+                catch (NotionCliException e) when (e.Failure == NotionCliFailure.NotFound)
+                {
+                    c.Skip(name, DeletedUpstream, source);
+                }
+                catch (NotionCliException e) when (e.Failure is NotionCliFailure.NotInstalled or NotionCliFailure.SignedOut)
+                {
+                    log($"  {e.Message}");
+                    blocked = e;
+                    c.Skip(name, e.Message, source);
+                }
+                catch (NotionCliException e)
+                {
+                    log($"  Failed to check {name} in Notion: {e.Message}");
+                    c.Skip(name, FailedToCheck, source);
+                }
             }
         }
     }

@@ -88,12 +88,41 @@ new SkillsManager(new SkillsManagerOptions
     GitHubToken = token,                   // default: GITHUB_TOKEN / GH_TOKEN
     EnableTelemetry = false,               // skills.sh install counts; off by default
     HomeDirectory = sandboxHome,           // tests and sandboxes
+    NotionCliPath = ntnPath,               // default: ntn on PATH
 });
 ```
 
+### Notion
+
+A Notion skills database is a source: pass its address
+(`https://app.notion.com/p/<id>` or a `notion.so` link) to `GetAvailableSkills`
+and `Install`, or the address of one skill page. Skills are named the way
+Notion names them when it downloads them: `Proofreader / copyeditor` becomes
+`proofreader-copyeditor`. The page title works too.
+
+Everything goes through the [Notion CLI](https://developers.notion.com/cli)
+(`ntn`), which keeps the sign-in in the OS credential store, so the library
+never sees a Notion token:
+
+| Method | Notes |
+| --- | --- |
+| `GetNotionStatus()` | Whether `ntn` is installed and signed in, with the workspace name |
+| `BeginNotionSignIn()` | The Notion page to open in the user's browser, and the code it shows |
+| `CompleteNotionSignIn()` | Waits, up to 15 minutes, for the user to approve |
+| `SignOutOfNotion()` | Deletes the token `ntn` keeps |
+
+A failure a host can act on throws `SkillsException` with `Failure` set to
+`NotionCliMissing`, `NotionSignedOut` or `NotionNotFound` (not shared with the
+signed-in workspace).
+
+Global installs from Notion are tracked in the global lock, with the page and
+its Notion version id, so `CheckForUpdates` finds skills edited in Notion. The
+reference CLI doesn't track them, and its `skills update` skips these entries
+(see [EXTENSIONS.md](../../../docs/EXTENSIONS.md#notion-skills-in-the-global-lock)).
+
 ## Not supported
 
-- `notion` sources, which need the interactive CLI's Notion flow.
+- Notion packs (`notion`), which need the interactive CLI to pick them.
 - `skills use`, `init` and `experimental_sync`, which are CLI workflows.
 
 ## License

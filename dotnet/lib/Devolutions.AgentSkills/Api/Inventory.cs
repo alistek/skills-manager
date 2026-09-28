@@ -46,7 +46,8 @@ internal static class Inventory
                 Ref = Json.NonEmpty(e, "ref"),
                 SkillPath = Json.NonEmpty(e, "skillPath"),
                 Hash = Json.NonEmpty(e, skillScope == SkillScope.Global ? "skillFolderHash" : "computedHash")
-                       ?? Json.NonEmpty(e, "wellKnownDigest"),
+                       ?? Json.NonEmpty(e, "wellKnownDigest")
+                       ?? Json.NonEmpty(e, "notionVersionId"),
                 PluginName = Json.NonEmpty(e, "pluginName"),
                 PinnedRef = Pinning.PinnedRef(e),
                 InstalledAt = Date(e, "installedAt"),

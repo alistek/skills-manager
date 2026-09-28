@@ -21,6 +21,7 @@ internal static class UpdateChecks
         "local" => "Local path",
         "git" => "Git URL",
         "well-known" => "Well-known skill",
+        "notion" => "Notion skill without a page id",
         _ => Json.NonEmpty(e, "skillFolderHash") == null ? "Private or deleted repo"
             : Json.NonEmpty(e, "skillPath") == null ? "No skill path recorded"
             : "No version tracking",

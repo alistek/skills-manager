@@ -144,3 +144,34 @@ directories and records their origin in SKILL.md frontmatter
   latest release or else the default branch, and lists the ones with updates.
   It leaves them to gh (`gh skill update`), because reinstalling them would
   drop gh's tracking metadata.
+
+## Notion skills in the global lock
+
+The reference CLI installs Notion skills (`skills add <notion-page>`,
+`skills add notion`) as direct downloads, which no lock file tracks. The
+`Devolutions.AgentSkills` library also takes the address of a Notion skills
+database or skill page, and records its global installs, so that it can find
+skills edited in Notion:
+
+```json
+"proofreader-copyeditor": {
+  "source": "https://app.notion.com/p/1a2b3c4d5e6f4a7b8c9d0e1f2a3b4c5d",
+  "sourceType": "notion",
+  "sourceUrl": "https://app.notion.com/p/3c4d5e6f7a8b4c9d8e0f2a3b4c5d6e7f",
+  "skillFolderHash": "",
+  "notionPageId": "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f",
+  "notionVersionId": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0",
+  "installedAt": "…",
+  "updatedAt": "…"
+}
+```
+
+- `source` is the database the skill is listed in (the page itself for a page
+  outside a database), and `sourceUrl` the skill's page.
+- `notionVersionId` is the version id Notion's Agent Skills API returns. The
+  library's update check compares it with the page's current one.
+- The entry has no `skillPath` and an empty `skillFolderHash`, like well-known
+  entries, so the reference CLI's `skills update` skips it rather than trying
+  to clone the page. `skills list` and `skills remove` work as for any entry.
+
+The CLI's own `skills add` for Notion sources is unchanged.

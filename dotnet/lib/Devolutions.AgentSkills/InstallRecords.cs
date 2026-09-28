@@ -174,6 +174,27 @@ internal static class InstallRecords
         }
     }
 
+    /// Record skills installed from Notion in the global lock, which the
+    /// reference CLI leaves out: no skillPath and an empty skillFolderHash keep
+    /// its update checks away, and the Notion fields let this library's find
+    /// updates. Project installs from Notion stay untracked, like downloads.
+    public static void RecordNotionSkills(IEnumerable<(string Name, NotionOrigin Origin)> installed, bool installGlobally)
+    {
+        if (!installGlobally) return;
+        foreach (var (name, origin) in installed)
+        {
+            TryAddToGlobalLock(name, new JsonObject
+            {
+                ["source"] = origin.Source,
+                ["sourceType"] = "notion",
+                ["sourceUrl"] = origin.PageUrl,
+                ["skillFolderHash"] = "",
+                ["notionPageId"] = origin.Page.Id,
+                ["notionVersionId"] = origin.VersionId,
+            });
+        }
+    }
+
     public static string? TryComputeHash(string dir)
     {
         try

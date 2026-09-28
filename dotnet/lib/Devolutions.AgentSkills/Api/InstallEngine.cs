@@ -24,6 +24,9 @@ internal sealed class ResolvedSource : IDisposable
     /// Set instead of <see cref="Skills"/> when a well-known index resolved.
     public List<WellKnownSkill>? WellKnownSkills { get; init; }
 
+    /// For a Notion source, where each skill (by its directory) came from.
+    public Dictionary<string, NotionOrigin>? Notion { get; init; }
+
     public void Dispose() => Git.TryCleanup(TempDir);
 }
 
@@ -31,19 +34,26 @@ internal static class InstallEngine
 {
     private const string NoSkills = "No valid skills found. Skills require a SKILL.md with name and description.";
 
-    private static bool IsNotionSource(string source) =>
-        source.Trim().Equals("notion", StringComparison.OrdinalIgnoreCase)
-        || WebUrl.Parse(source) is { Scheme: "https" or "http" } u
-           && (u.Hostname.EndsWith("notion.so", StringComparison.OrdinalIgnoreCase) || u.Hostname.EndsWith("notion.site", StringComparison.OrdinalIgnoreCase));
-
     private static bool IsWildcard(IReadOnlyCollection<string>? list) => list?.Contains("*") == true;
+
+    /// A Notion database or skill page, read through the Notion CLI. Notion
+    /// packs (`notion`) stay with the interactive CLI, which lets the user pick them.
+    private static string? NotionId(string source)
+    {
+        if (NotionFeed.ParseId(source) is { } id) return id;
+        if (source.Trim().Equals("notion", StringComparison.OrdinalIgnoreCase))
+            throw new SkillsException("Notion packs need the interactive skills CLI (`skills add notion`). Pass the address of a Notion skills database or skill page instead.");
+        if (NotionFeed.IsNotionUrl(source))
+            throw new SkillsException("This Notion address names no page or database. Use the address of a Notion skills database or skill page, over HTTPS.");
+        return null;
+    }
 
     /// Parse, fetch and scan a source. `requested` narrows discovery the way
     /// `--skill` does (internal skills become visible when named).
     public static ResolvedSource Resolve(string source, IReadOnlyList<string>? requested, bool fullDepth, Action<string> log)
     {
-        if (IsNotionSource(source))
-            throw new SkillsException("Notion sources need the interactive skills CLI (`skills add notion`) and are not supported by the library.");
+        if (NotionId(source) is { } notionId)
+            return NotionFeed.Resolve(notionId, requested?.Where(n => n.Length > 0).ToList() ?? [], log);
         ParsedSource parsed;
         try
         {
@@ -142,6 +152,8 @@ internal static class InstallEngine
 
     public static List<AvailableSkill> ListAvailable(string source, bool fullDepth, Action<string> log)
     {
+        // Notion lists a database's skills without downloading them
+        if (NotionId(source) is { } notionId) return NotionFeed.ListAvailable(notionId, log);
         using var src = Resolve(source, null, fullDepth, log);
         if (src.WellKnownSkills is { } wk) return wk.Select(s => new AvailableSkill(s.InstallName, s.Description, null)).ToList();
         return src.Skills.Select(s => new AvailableSkill(SkillDiscovery.DisplayName(s), s.Description, s.PluginName)).ToList();
@@ -220,7 +232,12 @@ internal static class InstallEngine
     {
         var parsed = src.Parsed;
         var outcomes = new List<SkillInstallOutcome>();
-        var selected = Select(src.Skills, names, everything, (skills, n) => SkillDiscovery.Filter(skills, [n]).Count > 0, outcomes, request.Scope, SkillDiscovery.DisplayName);
+        // A Notion skill also answers to its page title and the name derived from it
+        var notion = src.Notion;
+        Func<IEnumerable<Skill>, string, bool> matches = (skills, n) => SkillDiscovery.Filter(skills, [n]).Count > 0;
+        if (notion is { } origins)
+            matches = (skills, n) => skills.Any(s => SkillDiscovery.Filter([s], [n]).Count > 0 || (origins.TryGetValue(s.Path, out var o) && o.Page.Matches(n)));
+        var selected = Select(src.Skills, names, everything, matches, outcomes, request.Scope, SkillDiscovery.DisplayName);
 
         var targets = new List<Target>();
         foreach (var a in targetAgents)
@@ -261,6 +278,17 @@ internal static class InstallEngine
         var eveSubagents = targetAgents.Contains("eve") ? eveTargets.Select(s => s ?? "").ToList() : null;
         var hashes = InstallRecords.RecordInstalledSkills(parsed, src.DirectDownload, src.Blob, src.TempDir, selected, skillFiles, okNames,
             global, true, eveSubagents, cwd);
+        if (notion != null)
+        {
+            var installed = selected
+                .Where(s => okNames.Contains(SkillDiscovery.DisplayName(s)) && notion.ContainsKey(s.Path))
+                .Select(s => (s.Name, notion[s.Path]))
+                .ToList();
+            InstallRecords.RecordNotionSkills(installed, global);
+            // Notion's version id is what update checks compare
+            foreach (var s in selected)
+                if (notion.TryGetValue(s.Path, out var o)) hashes[SkillDiscovery.DisplayName(s)] = o.VersionId;
+        }
 
         foreach (var s in selected)
         {

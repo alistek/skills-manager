@@ -69,7 +69,7 @@ public sealed record InstalledSkillInfo
     /// <summary>Source recorded at install time (for example <c>owner/repo</c>), or null for untracked skills.</summary>
     public string? Source { get; init; }
 
-    /// <summary>Source kind: <c>github</c>, <c>gitlab</c>, <c>git</c>, <c>local</c>, <c>well-known</c> or <c>download</c>; null for untracked skills.</summary>
+    /// <summary>Source kind: <c>github</c>, <c>gitlab</c>, <c>git</c>, <c>local</c>, <c>well-known</c>, <c>download</c> or <c>notion</c>; null for untracked skills.</summary>
     public string? SourceType { get; init; }
 
     /// <summary>Full URL of the source, when recorded.</summary>
@@ -83,7 +83,8 @@ public sealed record InstalledSkillInfo
 
     /// <summary>
     /// Content hash recorded at install time: the Git tree SHA (global GitHub installs), a SHA-256
-    /// folder hash, or null. Skills have no version numbers; this is the closest equivalent.
+    /// folder hash, the well-known digest, Notion's version id, or null. Skills have no version
+    /// numbers; this is the closest equivalent.
     /// </summary>
     public string? Hash { get; init; }
 
@@ -131,7 +132,8 @@ public sealed class SkillInstallRequest
     /// <summary>
     /// Where to install from, in any form <c>skills add</c> accepts: <c>owner/repo</c>, <c>owner/repo@skill</c>,
     /// a GitHub or GitLab URL (optionally with a tree path or <c>#ref</c>), a Git URL, a local path,
-    /// a website publishing <c>/.well-known/skills</c>, or a direct SKILL.md / archive URL.
+    /// a website publishing <c>/.well-known/skills</c>, or a direct SKILL.md / archive URL. Also the address
+    /// of a Notion skills database or skill page, read through the Notion CLI (see <see cref="SkillsManager.GetNotionStatus"/>).
     /// </summary>
     public required string Source { get; init; }
 
@@ -270,6 +272,50 @@ public sealed record SkillUpdateResult(IReadOnlyList<SkillUpdateOutcome> Skills)
 /// <param name="Error">Error message on failure.</param>
 public sealed record SkillUpdateOutcome(string Name, SkillScope Scope, SkillOperationStatus Status, string? Error = null);
 
+/// <summary>Whether the Notion CLI, which Notion sources go through, can be used (see <see cref="SkillsManager.GetNotionStatus"/>).</summary>
+public enum NotionCliState
+{
+    /// <summary>The Notion CLI (<c>ntn</c>) was not found.</summary>
+    NotInstalled,
+
+    /// <summary>The Notion CLI is installed but not signed in to a workspace.</summary>
+    SignedOut,
+
+    /// <summary>The Notion CLI is signed in to a workspace.</summary>
+    SignedIn,
+
+    /// <summary>The Notion CLI is installed, but whether it is signed in could not be checked; see <see cref="NotionStatus.Message"/>.</summary>
+    Unknown,
+}
+
+/// <summary>The state of the Notion CLI.</summary>
+/// <param name="State">Whether it is installed and signed in.</param>
+/// <param name="CliVersion">Its version (for example <c>0.23.10</c>), when installed.</param>
+/// <param name="WorkspaceName">The workspace it is signed in to, when signed in.</param>
+/// <param name="Message">Why the state is <see cref="NotionCliState.Unknown"/>; null otherwise.</param>
+public sealed record NotionStatus(NotionCliState State, string? CliVersion, string? WorkspaceName, string? Message);
+
+/// <summary>A Notion sign-in waiting for the user to approve it in a browser (see <see cref="SkillsManager.BeginNotionSignIn"/>).</summary>
+/// <param name="Url">The Notion page to open, where the user approves the sign-in.</param>
+/// <param name="VerificationCode">The code that page shows; the user checks that the two match.</param>
+public sealed record NotionSignIn(Uri Url, string VerificationCode);
+
+/// <summary>Failures a host can act on, as opposed to <see cref="Other"/> ones that it can only report.</summary>
+public enum SkillsFailure
+{
+    /// <summary>Any other failure.</summary>
+    Other,
+
+    /// <summary>A Notion source needs the Notion CLI (<c>ntn</c>), which was not found.</summary>
+    NotionCliMissing,
+
+    /// <summary>A Notion source needs the Notion CLI to be signed in.</summary>
+    NotionSignedOut,
+
+    /// <summary>The Notion page or database does not exist, or is not shared with the workspace the Notion CLI is signed in to.</summary>
+    NotionNotFound,
+}
+
 /// <summary>A source could not be resolved or installed from (clone, download, parse or discovery failure).</summary>
 public sealed class SkillsException : Exception
 {
@@ -282,4 +328,13 @@ public sealed class SkillsException : Exception
     public SkillsException(string message, Exception innerException) : base(message, innerException)
     {
     }
+
+    /// <summary>Creates the exception for a failure the host can act on.</summary>
+    public SkillsException(string message, SkillsFailure failure, Exception? innerException = null) : base(message, innerException)
+    {
+        Failure = failure;
+    }
+
+    /// <summary>What went wrong, when the host can act on it (for example by offering to sign in to Notion).</summary>
+    public SkillsFailure Failure { get; }
 }

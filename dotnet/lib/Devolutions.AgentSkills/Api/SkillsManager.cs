@@ -23,6 +23,18 @@ public sealed class SkillsManagerOptions
     /// Off by default. <c>DISABLE_TELEMETRY</c> and <c>DO_NOT_TRACK</c> still turn it off.
     /// </summary>
     public bool EnableTelemetry { get; init; }
+
+    /// <summary>
+    /// The Notion CLI (<c>ntn</c>) that Notion sources and sign-in run, for hosts that install it where <c>PATH</c> does
+    /// not reach yet. Defaults to <c>ntn</c> on <c>PATH</c>.
+    /// </summary>
+    public string? NotionCliPath { get; init; }
+
+    /// <summary>Tests: answers Notion CLI calls instead of starting <c>ntn</c>.</summary>
+    internal Func<IReadOnlyList<string>, ProcOutput>? NotionRunner { get; init; }
+
+    /// <summary>Tests: fetches Notion skill archives instead of downloading them.</summary>
+    internal Func<string, DownloadedSource>? NotionDownloader { get; init; }
 }
 
 /// <summary>
@@ -70,6 +82,9 @@ public sealed partial class SkillsManager
             Warn = log,
             Telemetry = _options.EnableTelemetry,
             Cancel = cancellationToken,
+            NotionCli = _options.NotionCliPath,
+            NotionRunner = _options.NotionRunner,
+            NotionDownloader = _options.NotionDownloader,
         };
         using (Sys.Enter(context)) return body(log);
     }
@@ -234,4 +249,62 @@ public sealed partial class SkillsManager
     public Task<SkillUpdateResult> UpdateAsync(SkillScope? scope = null, IEnumerable<string>? skillNames = null,
         IProgress<string>? progress = null, CancellationToken cancellationToken = default) =>
         Task.Run(() => Update(scope, skillNames, progress, cancellationToken), cancellationToken);
+
+    // ─── Notion ───
+
+    /// <summary>
+    /// Whether the Notion CLI (<c>ntn</c>), which Notion sources go through, is installed and signed in. The CLI keeps
+    /// its token in the OS credential store; the library never sees it.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the check.</param>
+    public NotionStatus GetNotionStatus(CancellationToken cancellationToken = default) =>
+        Run(_ => NotionCli.GetStatus(), null, cancellationToken);
+
+    /// <inheritdoc cref="GetNotionStatus"/>
+    public Task<NotionStatus> GetNotionStatusAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => GetNotionStatus(cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Start signing the Notion CLI in: returns the Notion page to open in the user's browser and the code it shows.
+    /// Call <see cref="CompleteNotionSignIn"/> next, which waits for the user to approve.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    /// <exception cref="SkillsException">The Notion CLI is missing (<see cref="SkillsFailure.NotionCliMissing"/>) or failed.</exception>
+    public NotionSignIn BeginNotionSignIn(CancellationToken cancellationToken = default) =>
+        Run(_ => NotionCall(NotionCli.BeginSignIn), null, cancellationToken);
+
+    /// <inheritdoc cref="BeginNotionSignIn"/>
+    public Task<NotionSignIn> BeginNotionSignInAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => BeginNotionSignIn(cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Wait, up to 15 minutes, for the user to approve the sign-in started by <see cref="BeginNotionSignIn"/>.
+    /// Cancelling stops waiting.
+    /// </summary>
+    /// <param name="cancellationToken">Stops waiting.</param>
+    /// <exception cref="SkillsException">The sign-in was refused, expired or failed.</exception>
+    public void CompleteNotionSignIn(CancellationToken cancellationToken = default) =>
+        Run(_ => NotionCall(() => { NotionCli.CompleteSignIn(); return true; }), null, cancellationToken);
+
+    /// <inheritdoc cref="CompleteNotionSignIn"/>
+    public Task CompleteNotionSignInAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => CompleteNotionSignIn(cancellationToken), cancellationToken);
+
+    /// <summary>Sign the Notion CLI out of its workspace, deleting the token it keeps.</summary>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    /// <exception cref="SkillsException">The Notion CLI is missing or failed.</exception>
+    public void SignOutOfNotion(CancellationToken cancellationToken = default) =>
+        Run(_ => NotionCall(() => { NotionCli.SignOut(); return true; }), null, cancellationToken);
+
+    private static T NotionCall<T>(Func<T> call)
+    {
+        try
+        {
+            return call();
+        }
+        catch (NotionCliException e)
+        {
+            throw e.ToSkillsException();
+        }
+    }
 }

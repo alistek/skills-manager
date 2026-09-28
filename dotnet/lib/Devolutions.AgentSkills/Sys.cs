@@ -27,6 +27,15 @@ internal sealed class SysContext
 
     public CancellationToken Cancel { get; init; }
 
+    /// The Notion CLI to run for Notion sources; `ntn` on PATH when null.
+    public string? NotionCli { get; init; }
+
+    /// Tests: answers Notion CLI calls instead of starting `ntn`.
+    public Func<IReadOnlyList<string>, ProcOutput>? NotionRunner { get; init; }
+
+    /// Tests: fetches a Notion skill archive instead of downloading it.
+    public Func<string, DownloadedSource>? NotionDownloader { get; init; }
+
     /// Per-call cache of the agent table (paths depend on home and environment).
     internal object? AgentsCache;
 
